@@ -56,7 +56,8 @@ Set up a node to define all inputs required for the preprocessing workflow
 """
 
 inputnode = pe.Node(interface=util.IdentityInterface(fields=['func',
-                                                             'struct',]),
+                                                             'fssubject_id',
+                                                             'surf_dir']),
                     name='inputspec')
 
 """
@@ -209,6 +210,13 @@ mergenode = pe.Node(interface=util.Merge(2, axis='hstack'),
 preproc.connect(meanfunc2,'out_file', mergenode, 'in1')
 preproc.connect(medianval,'out_stat', mergenode, 'in2')
 
+
+"""
+Identitynode to set fwhm
+"""
+smoothval = pe.Node(interface=util.IdentityInterface(fields=['fwhm']),
+                    name='smoothval')
+                    
                        
 """
 Smooth each run using SUSAN with the brightness threshold set to 75% of the
@@ -225,7 +233,7 @@ Define a function to get the brightness threshold for SUSAN
 
 def getbtthresh(medianvals):
     return [0.75*val for val in medianvals]
-
+preproc.connect(smoothval, 'fwhm', smooth, 'fwhm')
 preproc.connect(maskfunc2, 'out_file', smooth, 'in_file')
 preproc.connect(medianval, ('out_stat', getbtthresh), smooth, 'brightness_threshold')
 preproc.connect(mergenode, ('out', lambda x: [[tuple([val[0],0.75*val[1]])] for val in x]), smooth, 'usans')
@@ -241,6 +249,25 @@ maskfunc3 = pe.MapNode(interface=fsl.ImageMaths(suffix='_mask',
 preproc.connect(smooth, 'smoothed_file', maskfunc3, 'in_file')
 preproc.connect(dilatemask, 'out_file', maskfunc3, 'in_file2')
 
+
+concatnode = pe.Node(interface=util.Merge(2),
+                     name='concat')
+preproc.connect(maskfunc2,('out_file', lambda x:[x]), concatnode, 'in1')
+preproc.connect(maskfunc3,('out_file', lambda x:[x]), concatnode, 'in2')
+
+selectnode = pe.Node(interface=util.Select(),name='select')
+
+preproc.connect(concatnode, 'out', selectnode, 'inlist')
+
+def chooseindex(fwhm):
+    if fwhm<1:
+        return [0]
+    else:
+        return [1]
+    
+preproc.connect(smoothval, ('fwhm', chooseindex), selectnode, 'index')
+
+
 """
 Scale the median value of the run is set to 10000
 """
@@ -248,7 +275,7 @@ Scale the median value of the run is set to 10000
 meanscale = pe.MapNode(interface=fsl.ImageMaths(suffix='_gms'),
                       iterfield=['in_file','op_string'],
                       name='meanscale')
-preproc.connect(maskfunc3, 'out_file', meanscale, 'in_file')
+preproc.connect(selectnode, 'out', meanscale, 'in_file')
 
 """
 Define a function to get the scaling factor for intensity normalization
@@ -277,18 +304,15 @@ meanfunc3 = pe.MapNode(interface=fsl.ImageMaths(op_string='-Tmean',
                       name='meanfunc3')
 preproc.connect(highpass, ('out_file', pickfirst), meanfunc3, 'in_file')
 
+
 """
-Strip the structural image a coregister the mean functional image to the
-structural image
+Register the mean functional to the freesurfer surface
 """
 
-nosestrip = pe.Node(interface=fsl.BET(frac=0.3),
-                    name = 'nosestrip')
-skullstrip = pe.Node(interface=fsl.BET(mask = True),
-                     name = 'stripstruct')
+surfregister = pe.Node(interface=fs.BBRegister(init='fsl',
+                                               contrast_type='t2'),
+                     name = 'surfregister')
 
-coregister = pe.Node(interface=fsl.FLIRT(dof=6),
-                     name = 'coregister')
 
 """
 Use :class:`nipype.algorithms.rapidart` to determine which of the
@@ -296,19 +320,17 @@ images in the functional series are outliers based on deviations in
 intensity and/or movement.
 """
 
-art = pe.Node(interface=ra.ArtifactDetect(use_differences = [False,True],
+art = pe.Node(interface=ra.ArtifactDetect(use_differences = [True, False],
                                           use_norm = True,
-                                          norm_threshold = 0.5,
                                           zintensity_threshold = 3,
                                           parameter_source = 'FSL',
                                           mask_type = 'file'),
               name="art")
 
 
-preproc.connect([(inputnode, nosestrip,[('struct','in_file')]),
-                 (nosestrip, skullstrip, [('out_file','in_file')]),
-                 (skullstrip, coregister,[('out_file','in_file')]),
-                 (meanfunc2, coregister,[(('out_file',pickfirst),'reference')]),
+preproc.connect([(inputnode, surfregister,[('fssubject_id','subject_id'),
+                                           ('surf_dir','subjects_dir')]),
+                 (meanfunc2, surfregister,[(('out_file',pickfirst),'source_file')]),
                  (motion_correct, art, [('par_file','realignment_parameters')]),
                  (maskfunc2, art, [('out_file','realigned_files')]),
                  (dilatemask, art, [('out_file', 'mask_file')]),
@@ -390,7 +412,7 @@ fixed_fx = pe.Workflow(name='fixedfx')
 selectnode = pe.Node(interface=util.IdentityInterface(fields=['runs']),
                     name='idselect')
 
-selectnode.iterables = ('runs', [[0,1],[0,2],[0,3],[1,2],[1,3],[2,3],[0,1,2,3]])
+selectnode.iterables = ('runs', [[0,1],[0,2],[0,3],[1,2],[1,3],[2,3],[0,1,2],[0,1,2,3]])
 
 copeselect = pe.MapNode(interface=util.Select(), name='copeselect',
                         iterfield=['inlist'])
@@ -468,8 +490,9 @@ information for the functional runs and the contrasts to be evaluated.
 """
 
 inputnode = pe.Node(interface=util.IdentityInterface(fields=['func',
-                                                             'struct',
+                                                             'surf_dir',
                                                              'subject_id',
+                                                             'fssubject_id',
                                                              'session_info',
                                                              'contrasts']),
                     name='inputnode')
@@ -480,15 +503,18 @@ Connect the components into an integrated workflow.
 
 l1pipeline = pe.Workflow(name='firstlevel')
 l1pipeline.connect([(inputnode,preproc,[('func','inputspec.func'),
-                                        ('struct','inputspec.struct')]),
+                                        ('fssubject_id','inputspec.fssubject_id'),
+                                        ('surf_dir','inputspec.surf_dir')]),
                     (inputnode,modelfit,[('subject_id','modelspec.subject_id'),
                                          ('session_info','modelspec.subject_info'),
                                          ('contrasts','level1design.contrasts'),
                                          ]),
                     (preproc, modelfit, [('highpass.out_file', 'modelspec.functional_runs'),
                                          ('highpass.out_file', 'modelestimate.in_file'),
+                                         ('realign.par_file',
+                                          'modelspec.realignment_parameters'),
                                          ('art.outlier_files', 'modelspec.outlier_files')]),
-                    (preproc, fixed_fx, [('coregister.out_file', 'flameo.mask_file')]),
+                    (preproc, fixed_fx, [('dilatemask.out_file', 'flameo.mask_file')]),
                     (modelfit, fixed_fx,[(('conestimate.copes', sort_copes),'copeselect.inlist'),
                                          (('conestimate.varcopes', sort_copes),'varcopeselect.inlist'),
                                          ])

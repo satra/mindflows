@@ -32,16 +32,16 @@ intensity or movement.
 """
 
 art = pe.Node(interface=ra.ArtifactDetect(), name="art")
-art.inputs.use_differences      = [False,True]
-art.inputs.use_norm             = True
-art.inputs.norm_threshold       = 0.5
-art.inputs.zintensity_threshold = 3
+#art.inputs.use_differences      = [False,True]
+#art.inputs.use_norm             = True
+#art.inputs.norm_threshold       = 0.5
+#art.inputs.zintensity_threshold = 3
 art.inputs.mask_type            = 'file'
 
 
 #run FreeSurfer's BBRegister
 surfregister = pe.Node(interface=fs.BBRegister(),name='surfregister')
-surfregister.inputs.init = 'header'
+surfregister.inputs.init = 'fsl'
 surfregister.inputs.contrast_type = 't2'
 
 # Get information from the FreeSurfer directories (brainmask, etc)
@@ -96,6 +96,7 @@ volanalysis = pe.Workflow(name='volanalysis')
 
 modelspec = pe.Node(interface=model.SpecifyModel(), name= "modelspec")
 modelspec.inputs.concatenate_runs        = True
+modelspec.overwrite = True
 
 """Generate a first level SPM.mat file for analysis
 :class:`nipype.interfaces.spm.Level1Design`.
@@ -140,6 +141,9 @@ Set up volume normalization workflow
 volnorm = pe.Workflow(name='volnormconimages')
 
 convert = pe.Node(interface=fs.MRIConvert(out_type='nii'),name='convert2nii')
+convert2 = pe.MapNode(interface=fs.MRIConvert(in_type='nifti1',out_type='nii'),
+                      iterfield=['in_file'],
+                      name='convertnifti12nii')
 segment = pe.Node(interface=spm.Segment(), name='segment')
 normwreg = pe.MapNode(interface=fs.ApplyVolTransform(),
                       iterfield=['source_file'],
@@ -148,6 +152,7 @@ normalize = pe.Node(interface=spm.Normalize(jobtype='write'),
                     name='norm2mni')
 
 volnorm.connect([(convert, segment, [('out_file','data')]),
+                 (convert2, normwreg, [('out_file','source_file')]),
                  (segment, normalize, [('transformation_mat', 'parameter_file')]),
                  (normwreg, normalize, [('transformed_file','apply_to_files')]),
                  ])
@@ -164,6 +169,21 @@ inputnode = pe.Node(interface=util.IdentityInterface(fields=['struct',
                                                              'session_info',
                                                              'contrasts']),
                     name='inputnode')
+
+"""
+Use :class:`nipype.algorithms.rapidart` to determine if stimuli are correlated with motion or intensity parameters (STIMULUS CORRELATED MOTION).
+"""
+
+stimcorr = pe.Node(interface=ra.StimulusCorrelation(),name='stimcorr')
+stimcorr.inputs.concatenated_design             = True
+
+"""
+Merge con images and T images into a single list that will then be normalized
+"""
+
+mergefiles = pe.Node(interface=util.Merge(2),
+                     name='mergeconfiles')
+
 
 l1pipeline = pe.Workflow(name='firstlevel')
 l1pipeline.connect([(inputnode,preproc,[('func','realign.in_files'),
@@ -193,13 +213,21 @@ l1pipeline.connect([(preproc, volanalysis, [('realign.realignment_parameters',
                                              ('art.outlier_files',
                                               'modelspec.outlier_files'),
                                              ('convert2nii.out_file',
-                                              'level1design.mask_image')])
+                                              'level1design.mask_image')]),
+                    (preproc, stimcorr,[('realign.realignment_parameters',
+                                         'realignment_parameters'),
+                                        ('art.intensity_files','intensity_values')]),
+                    (volanalysis, stimcorr, [('level1design.spm_mat_file',
+                                              'spm_mat_file')]),
                     ])
+
 # attach volume contrast normalization components
 l1pipeline.connect([(preproc, volnorm, [('fssource.orig','convert2nii.in_file'),
                                         ('surfregister.out_reg_file','applyreg2con.reg_file'),
                                         ('fssource.orig','applyreg2con.target_file')]),
-                    (volanalysis, volnorm, [('contrastestimate.con_images',
-                                             'applyreg2con.source_file'),
-                                            ])
+                    (volanalysis, mergefiles,[('contrastestimate.con_images','in1'),
+                                              ('contrastestimate.spmT_images','in2'),
+                                              ]),
+                    (mergefiles, volnorm, [('out',
+                                            'convertnifti12nii.in_file')]),
                   ])
