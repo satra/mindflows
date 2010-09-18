@@ -104,6 +104,16 @@ preproc.connect(img2float, 'out_file', motion_correct, 'in_file')
 preproc.connect(extract_ref, 'roi_file', motion_correct, 'ref_file')
 
 """
+Plot the estimated motion parameters
+"""
+
+plot_motion = pe.MapNode(interface=fsl.PlotMotionParams(in_source='fsl'),
+                        name='plot_motion',
+                        iterfield=['in_file'])
+plot_motion.iterables = ('plot_type', ['rotations', 'translations'])
+preproc.connect(motion_correct, 'par_file', plot_motion, 'in_file')
+
+"""
 Extract the mean volume of the first functional run
 """
 
@@ -327,6 +337,17 @@ art = pe.Node(interface=ra.ArtifactDetect(use_differences = [True, False],
                                           mask_type = 'file'),
               name="art")
 
+# Get information from the FreeSurfer directories (brainmask, etc)
+FreeSurferSource = pe.Node(interface=nio.FreeSurferSource(), name='fssource')
+
+# Allow inversion of brainmask.mgz to volume (functional) space for alignment
+ApplyVolTransform = pe.Node(interface=fs.ApplyVolTransform(),
+                            name='warpbrainmask')
+ApplyVolTransform.inputs.inverse = True 
+
+
+convert2nii = pe.Node(interface=fs.MRIConvert(out_type='niigz'),name='convert2nii')
+
 
 preproc.connect([(inputnode, surfregister,[('fssubject_id','subject_id'),
                                            ('surf_dir','subjects_dir')]),
@@ -334,6 +355,11 @@ preproc.connect([(inputnode, surfregister,[('fssubject_id','subject_id'),
                  (motion_correct, art, [('par_file','realignment_parameters')]),
                  (maskfunc2, art, [('out_file','realigned_files')]),
                  (dilatemask, art, [('out_file', 'mask_file')]),
+                 (inputnode, FreeSurferSource,[('fssubject_id','subject_id')]),
+                 (FreeSurferSource, ApplyVolTransform,[('brainmask','target_file')]),
+                 (surfregister, ApplyVolTransform,[('out_reg_file','reg_file')]),
+                 (meanfunc2, ApplyVolTransform,[(('out_file', pickfirst), 'source_file')]),
+                 (ApplyVolTransform, convert2nii,[('transformed_file','in_file')])
                  ])
 
 
@@ -409,7 +435,7 @@ Set up fixed-effects workflow
 
 fixed_fx = pe.Workflow(name='fixedfx')
 
-selectnode = pe.Node(interface=util.IdentityInterface(fields=['runs']),
+selectnode = pe.Node(interface=util.IdentityInterface(fields=['runs','funcdata']),
                     name='idselect')
 
 selectnode.iterables = ('runs', [[0,1],[0,2],[0,3],[1,2],[1,3],[2,3],[0,1,2],[0,1,2,3]])
@@ -445,6 +471,10 @@ model
 flameo = pe.MapNode(interface=fsl.FLAMEO(run_mode='fe'), name="flameo",
                     iterfield=['cope_file','var_cope_file'])
 
+ztopval = pe.MapNode(interface=fsl.ImageMaths(op_string='-ztop',
+                                              suffix='_pval'),name='ztop',
+                     iterfield=['in_file'])
+                     
 fixed_fx.connect([(selectnode,copeselect,[('runs','index')]),
                   (selectnode,varcopeselect,[('runs','index')]),
                   (selectnode,level2model,[(('runs', num_copes),'num_copes')]),
@@ -456,8 +486,31 @@ fixed_fx.connect([(selectnode,copeselect,[('runs','index')]),
                   (level2model,flameo, [('design_mat','design_file'),
                                         ('design_con','t_con_file'),
                                         ('design_grp','cov_split_file')]),
+                  (flameo,ztopval, [('zstats','in_file')]),
                   ])
 
+"""
+Setup overlay workflow
+----------------------
+
+"""
+
+overlay = pe.Workflow(name='overlay')
+overlaystats = pe.MapNode(interface=fsl.Overlay(), name="overlaystats",
+                          iterfield=['stat_image'])
+overlaystats.inputs.show_negative_stats=True
+overlaystats.inputs.auto_thresh_bg=True
+
+"""Use :class:`nipype.interfaces.fsl.Slicer` to create images of the overlaid
+statistical volumes for a report of the first-level results.
+"""
+
+slicestats = pe.MapNode(interface=fsl.Slicer(), name="slicestats",
+                        iterfield=['in_file'])
+slicestats.inputs.all_axial = True
+slicestats.inputs.image_width = 512
+
+overlay.connect(overlaystats, 'out_file', slicestats, 'in_file')
 
 """
 Set up first-level workflow
@@ -514,9 +567,14 @@ l1pipeline.connect([(inputnode,preproc,[('func','inputspec.func'),
                                          ('realign.par_file',
                                           'modelspec.realignment_parameters'),
                                          ('art.outlier_files', 'modelspec.outlier_files')]),
-                    (preproc, fixed_fx, [('dilatemask.out_file', 'flameo.mask_file')]),
+                    # force idselect to get executed after smoothing.
+                    (preproc, fixed_fx, [('dilatemask.out_file', 'flameo.mask_file'),
+                                         ('highpass.out_file','idselect.funcdata')]),
                     (modelfit, fixed_fx,[(('conestimate.copes', sort_copes),'copeselect.inlist'),
                                          (('conestimate.varcopes', sort_copes),'varcopeselect.inlist'),
-                                         ])
+                                         ]),
+                    (preproc, overlay, [('convert2nii.out_file',
+                                         'overlaystats.background_image')]),
+                    (fixed_fx, overlay, [('flameo.tstats','overlaystats.stat_image')]),
                     ])
 
