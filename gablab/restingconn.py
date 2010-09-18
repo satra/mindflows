@@ -94,3 +94,13 @@ restpreproc.connect([(slicetimecorrect, realign,[('timecorrected_files','in_file
                  (realign,art,[('realignment_parameters','realignment_parameters')]),
                  (normalize,art,[('normalized_files','realigned_files')]),
                  ])
+
+coregister2 = pe.Node(interface=spm.Coregister(), name="coregister")
+
+restpreproc2 = pe.Workflow(name='restpreproc')
+restpreproc2.connect([(slicetimecorrect, realign,[('timecorrected_files','in_files')]),
+                      (realign,coregister2,[('mean_image', 'source'),
+                                            ('realigned_files','apply_to_files')]),
+                      (realign,art,[('realigned_files','realigned_files'),
+                                    ('realignment_parameters','realignment_parameters')]),
+                 ])
