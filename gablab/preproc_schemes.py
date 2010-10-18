@@ -1,8 +1,11 @@
 import os                                    # system functions
 
+from warnings import warn
+
 import nipype.algorithms.modelgen as model   # model generation
 import nipype.algorithms.rapidart as ra      # artifact detection
 import nipype.interfaces.freesurfer as fs    # freesurfer
+import nipype.interfaces.spm as spm          # freesurfer
 import nipype.interfaces.io as nio           # i/o routines
 import nipype.interfaces.fsl as fsl          # fsl
 import nipype.interfaces.utility as util     # utility
@@ -10,20 +13,9 @@ import nipype.pipeline.engine as pe          # pypeline engine
 
 from nipype.externals.pynifti import load
 
-"""
-Preliminaries
--------------
 
-Confirm package dependencies are installed.  (This is only for the tutorial,
-rarely would you put this in your own code.)
-"""
+warn('WORK IN PROGRESS. USE WITH CAUTION')
 
-from nipype.utils.misc import package_check
-
-package_check('numpy', '1.3', 'tutorial1')
-package_check('scipy', '0.7', 'tutorial1')
-package_check('networkx', '1.0', 'tutorial1')
-package_check('IPython', '0.10', 'tutorial1')
 
 """
 Setup any package specific configuration. The output file format for FSL
@@ -361,4 +353,11 @@ fslfspreproc.connect([(inputnode, surfregister,[('fssubject_id','subject_id'),
                  (meanfunc2, ApplyVolTransform,[(('out_file', pickfirst), 'source_file')]),
                  (ApplyVolTransform, convert2nii,[('transformed_file','in_file')])
                  ])
+
+
+fslfsdatasink = pe.Node(interface=nio.DataSink(), name='datasink')
+
+fslfspreproc.connect([(),
+                      ])
+
 

@@ -39,6 +39,7 @@ l2flow.connect(l2inputnode, 'contrasts', l2source, 'con_id')
 l2flow.connect(l2inputnode, 'base_directory', l2source, 'base_directory')
 l2flow.connect(l2inputnode, 'field_template', l2source, 'field_template')
 
+
 """
 Merge contrast images and registration files
 """
@@ -82,6 +83,7 @@ Concatenate contrast images projected to fsaverage
 """
 
 l2concat = pe.Node(interface=fs.MRISPreproc(), name='concat')
+l2concat.inputs.proj_frac = 0.5
 l2concat.inputs.target = 'fsaverage'
 l2concat.inputs.fwhm = 5
 
@@ -93,4 +95,5 @@ Perform a one sample t-test
 """
 
 l2ttest = pe.Node(interface=fs.OneSampleTTest(), name='onesample')
+l2flow.connect(l2inputnode, ('hemi', lambda x: (l2concat.inputs.target, x, 'white')), l2ttest, 'surf')
 l2flow.connect(l2concat, 'out_file', l2ttest, 'in_file')
