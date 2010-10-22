@@ -1,9 +1,9 @@
-"""Convert dicom TimTrio dirs to nii.gz files based on config files
+helpdoc = """Convert dicom TimTrio dirs to nii.gz files based on config files.
 
 This function uses FreeSurfer tools (unpacksdcmdir) to convert Siemens
 TrioTim directories. It then proceeeds by extracting dicominfo from each
-subject and writing a config file $subject_id.auto.txt in the output
-directory. Users can create a copy of the file called
+subject and writing a config file $subject_id/$subject_id.auto.txt in
+the output directory. Users can create a copy of the file called
 $subject_id.edit.txt and modify it to change the files that are
 converted. This edited file will always overwrite the original file. If
 there is a need to revert to original state, please delete this edit.txt
@@ -152,12 +152,13 @@ def convert_dicoms(subjs, dicom_dir_template, outputdir, queue=None, heuristic_f
 
 
 if __name__ == '__main__':
-    docstr='''
-           Convert a dicomdirectory to files using unpacksdicomdir
+    docstr= '\n'.join((helpdoc,
+"""
+           Example:
 
-           Example
-           dicomconvert.py -d rawdata/%s -o . -f heuristic.py -s s1 -i
-           '''
+           dicomconvert.py -d rawdata/%s -o . -f heuristic.py -s s1 s2
+s3
+"""))
     parser = argparse.ArgumentParser(description=docstr)
     parser.add_argument('-d','--dicom_dir_template',
                         dest='dicom_dir_template',
