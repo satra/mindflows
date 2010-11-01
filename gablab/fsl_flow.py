@@ -593,6 +593,6 @@ l1pipeline.connect([(inputnode,preproc,[('func','inputspec.func'),
                                            ("mergedestimate.out", "funcxfm.in_file")]),
                     (preproc, overlay, [('convert2nii.out_file',
                                          'overlaystats.background_image')]),
-                    (modelfit, overlay, [(('conestimate.tstats', lambda x: x[0]),'overlaystats.stat_image')]),
+                    (modelfit, overlay, [(('conestimate.zstats', lambda x: x[0]),'overlaystats.stat_image')]),
                     ])
 

@@ -20,7 +20,7 @@ routines is being set to compressed NIFTI.
 fsl.FSLCommand.set_default_output_type('NIFTI_GZ')
 
 from mindflows.gablab.fsl_flow import (preproc, modelfit, overlay,
-                                       normalize, applynorm, applynorm2)
+                                       normalize, applynorm)
 
 
 """
@@ -136,6 +136,9 @@ l1pipeline.connect([(inputnode,preproc,[('func','inputspec.func'),
                                          ('session_info','modelspec.subject_info'),
                                          ('contrasts','level1design.contrasts'),
                                          ]),
+                    (preproc,normalize,[("fssource.brainmask", "niftimask.in_file"),
+                                        ("fssource.T1", "niftit1.in_file"),
+                                        ("surfregister.out_fsl_file", "matconcat.in_file")]),
                     (preproc, modelfit, [('highpass.out_file', 'modelspec.functional_runs'),
                                          ('highpass.out_file', 'modelestimate.in_file'),
                                          ('realign.par_file',
@@ -154,15 +157,8 @@ l1pipeline.connect([(inputnode,preproc,[('func','inputspec.func'),
                                              "warpfunc.in_file"),
                                            (("flameo.copes", lambda x:x[0]),
                                              "funcxfm.in_file")]),
-                    (normalize, applynorm2, [("fnirt.fieldcoeff_file", "warpfunc.field_file"),
-                                            ("matconcat.out_file", "funcxfm.in_matrix_file")]),
-                    (preproc, applynorm2, [("surfregister.out_fsl_file", "warpfunc.premat")]),
-                    (fixed_fx, applynorm2, [(("flameo.var_copes", lambda x:x[0]),
-                                             "warpfunc.in_file"),
-                                           (("flameo.var_copes", lambda x:x[0]),
-                                             "funcxfm.in_file")]),
                     (preproc, overlay, [('convert2nii.out_file',
                                          'overlaystats.background_image')]),
-                    (fixed_fx, overlay, [('flameo.tstats','overlaystats.stat_image')]),
+                    (fixed_fx, overlay, [('flameo.zstats','overlaystats.stat_image')]),
                     ])
 

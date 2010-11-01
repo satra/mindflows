@@ -193,8 +193,10 @@ s3
         sys.path.append(path)
         mod = __import__(fname.split('.')[0])
         heuristic_func = mod.infotodict
-    get_dicom_info(args.subjs, args.dicom_dir_template, args.outputdir)
+    get_dicom_info(args.subjs, args.dicom_dir_template,
+                   os.path.abspath(args.outputdir))
     if not args.infoonly:
-        convert_dicoms(args.subjs, args.dicom_dir_template, args.outputdir,
+        convert_dicoms(args.subjs, args.dicom_dir_template,
+                       os.path.abspath(args.outputdir),
                        heuristic_func=heuristic_func,
                        queue=args.queue)
