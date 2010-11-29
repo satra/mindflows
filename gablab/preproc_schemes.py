@@ -458,7 +458,6 @@ def create_spmpreproc2(name='spmpreproc'):
 
     realign = pe.Node(interface=spm.Realign(), name="realign")
     realign.inputs.register_to_mean = True
-    realign.inputs.jobtype = 'estimate'
     preproc.connect(inputnode,'func', realign, 'in_files')
     preproc.connect(realign, 'realignment_parameters', datasink, 'motion.parameters')
 
