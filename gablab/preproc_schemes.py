@@ -2,12 +2,11 @@ import os                                    # system functions
 
 from warnings import warn
 
-import nipype.algorithms.modelgen as model   # model generation
-import nipype.algorithms.rapidart as ra      # artifact detection
 import nipype.interfaces.freesurfer as fs    # freesurfer
+import nipype.interfaces.fsl as fsl          # fsl
 import nipype.interfaces.spm as spm          # freesurfer
 import nipype.interfaces.io as nio           # i/o routines
-import nipype.interfaces.fsl as fsl          # fsl
+import nipype.algorithms.rapidart as ra      # artifact detection
 import nipype.interfaces.utility as util     # utility
 import nipype.pipeline.engine as pe          # pypeline engine
 
@@ -43,17 +42,60 @@ motion correction and smoothing operations.
 """
 
 def create_featpreproc(name='featpreproc'):
+    """Create a FEAT preprocessing workflow
+    
+    Parameters
+    ----------
+    
+    func : functional runs (filename or list of filenames)
+    fwhm : fwhm for smoothing with SUSAN
+    highpass : HWHM in TRs
+    outdir : where preprocessed data should be stored
+    subjectid : subjectid (used for storing output under subject's name
+    subs : paths substitutions for datasink
+
+    Example
+    -------
+
+    >>> from mindflows.gablab.preproc_schemes import create_featpreproc
+    >>> import os
+    >>> preproc = create_featpreproc()
+    >>> preproc.inputs.inputspec.func = 'f3.nii'
+    >>> preproc.inputs.inputspec.fwhm = 5
+    >>> preproc.inputs.inputspec.highpass = 128./(2*2.5)
+    >>> preproc.inputs.inputspec.outdir = os.path.abspath('l1out')
+    >>> preproc.inputs.inputspec.subjectid = 's1'
+    >>> preproc.inputs.inputspec.subs = []
+    >>> preproc.base_dir = '/tmp'
+    >>> preproc.run() # doctest: +SKIP
+    
+    """
+    
     featpreproc = pe.Workflow(name=name)
 
     """
     Set up a node to define all inputs required for the preprocessing workflow
+
     """
 
     inputnode = pe.Node(interface=util.IdentityInterface(fields=['func',
                                                                  'fwhm',
-                                                                 'highpass']),
+                                                                 'highpass',
+                                                                 'outdir',
+                                                                 'subjectid',
+                                                                 'subs']),
                         name='inputspec')
 
+    """
+    Create a datasink 
+    """
+    
+    datasink = pe.Node(interface=nio.DataSink(),
+                       name='datasink')
+    featpreproc.connect(inputnode, 'outdir', datasink, 'base_directory')
+    featpreproc.connect(inputnode, 'subjectid', datasink, 'container')
+    featpreproc.connect(inputnode, 'subs', datasink, 'substitutions')
+    
     """
     Convert functional images to float representation. Since there can
     be more than one functional run we use a MapNode to convert each
@@ -86,9 +128,10 @@ def create_featpreproc(name='featpreproc'):
             return files
 
     featpreproc.connect(img2float, ('out_file', pickfirst), extract_ref, 'in_file')
+    featpreproc.connect(extract_ref, 'roi_file', datasink, 'reference')
 
     """
-    Realign the functional runs to the reference
+    Realign the functional runs to the reference (1st volume of first run)
     """
 
     motion_correct = pe.MapNode(interface=fsl.MCFLIRT(save_mats = True,
@@ -97,6 +140,8 @@ def create_featpreproc(name='featpreproc'):
                                 iterfield = ['in_file'])
     featpreproc.connect(img2float, 'out_file', motion_correct, 'in_file')
     featpreproc.connect(extract_ref, 'roi_file', motion_correct, 'ref_file')
+    featpreproc.connect(motion_correct, 'par_file', datasink, 'motion.parameters')
+    featpreproc.connect(motion_correct, 'out_file', datasink, 'motion.realigned')
 
     """
     Plot the estimated motion parameters
@@ -107,6 +152,7 @@ def create_featpreproc(name='featpreproc'):
                             iterfield=['in_file'])
     plot_motion.iterables = ('plot_type', ['rotations', 'translations'])
     featpreproc.connect(motion_correct, 'par_file', plot_motion, 'in_file')
+    featpreproc.connect(plot_motion, 'out_file', datasink, 'motion.plots')
 
     """
     Extract the mean volume of the first functional run
@@ -184,6 +230,7 @@ def create_featpreproc(name='featpreproc'):
                                                   op_string='-dilF'),
                            name='dilatemask')
     featpreproc.connect(threshold, 'out_file', dilatemask, 'in_file')
+    featpreproc.connect(dilatemask, 'out_file', datasink, 'mask')
 
     """
     Mask the motion corrected functional runs with the dilated mask
@@ -254,6 +301,12 @@ def create_featpreproc(name='featpreproc'):
     featpreproc.connect(maskfunc2,('out_file', lambda x:[x]), concatnode, 'in1')
     featpreproc.connect(maskfunc3,('out_file', lambda x:[x]), concatnode, 'in2')
 
+    """
+    The following nodes select smooth or unsmoothed data depending on the
+    fwhm. This is because SUSAN defaults to smoothing the data with about the
+    voxel size of the input data if the fwhm parameter is less than 1/3 of the
+    voxel size.
+    """
     selectnode = pe.Node(interface=util.Select(),name='select')
 
     featpreproc.connect(concatnode, 'out', selectnode, 'inlist')
@@ -265,6 +318,7 @@ def create_featpreproc(name='featpreproc'):
             return [1]
 
     featpreproc.connect(inputnode, ('fwhm', chooseindex), selectnode, 'index')
+    featpreproc.connect(selectnode, 'out', datasink, 'smoothed')
 
 
     """
@@ -293,6 +347,7 @@ def create_featpreproc(name='featpreproc'):
                           name='highpass')
     featpreproc.connect(inputnode, ('highpass', lambda x:'-bptf %.10f -1'%x), highpass, 'op_string')
     featpreproc.connect(meanscale, 'out_file', highpass, 'in_file')
+    featpreproc.connect(highpass, 'out_file', datasink, 'highpassed')
 
     """
     Generate a mean functional image from the first run
@@ -303,5 +358,208 @@ def create_featpreproc(name='featpreproc'):
                            iterfield=['in_file'],
                           name='meanfunc3')
     featpreproc.connect(highpass, ('out_file', pickfirst), meanfunc3, 'in_file')
+    featpreproc.connect(meanfunc3, 'out_file', datasink, 'mean')
 
+    
     return featpreproc
+
+def create_spmpreproc1(name='spmpreproc'):
+    """Use SPM to do realignment and smoothing
+    
+    """
+    preproc = pe.Workflow(name=name)
+
+    """
+    Set up a node to define all inputs required for the preprocessing workflow
+
+    """
+
+    inputnode = pe.Node(interface=util.IdentityInterface(fields=['func',
+                                                                 'fwhm',
+                                                                 'outdir',
+                                                                 'subjectid',
+                                                                 'subs']),
+                        name='inputspec')
+
+    """
+    Create a datasink 
+    """
+    
+    datasink = pe.Node(interface=nio.DataSink(),
+                       name='datasink')
+    preproc.connect(inputnode, 'outdir', datasink, 'base_directory')
+    preproc.connect(inputnode, 'subjectid', datasink, 'container')
+    preproc.connect(inputnode, 'subs', datasink, 'substitutions')
+
+    """
+    Use :class:`nipype.interfaces.spm.Realign` for motion correction and
+    register all images to the mean image.
+    """
+
+    realign = pe.Node(interface=spm.Realign(), name="realign")
+    realign.inputs.register_to_mean = True
+    preproc.connect(inputnode,'func', realign, 'in_files')
+    preproc.connect(realign, 'realigned_files', datasink, 'motion.realigned')
+    preproc.connect(realign, 'realignment_parameters', datasink, 'motion.parameters')
+
+    """
+    Plot the estimated motion parameters
+    """
+
+    plot_motion = pe.MapNode(interface=fsl.PlotMotionParams(in_source='spm'),
+                            name='plot_motion',
+                            iterfield=['in_file'])
+    plot_motion.iterables = ('plot_type', ['rotations', 'translations'])
+    preproc.connect(realign, 'realignment_parameters', plot_motion, 'in_file')
+    preproc.connect(plot_motion, 'out_file', datasink, 'motion.plots')
+    
+    """
+    Smooth the functional data using :class:`nipype.interfaces.spm.Smooth`.
+    """
+
+    smooth = pe.Node(interface=spm.Smooth(), name = "smooth")
+    preproc.connect(inputnode, 'fwhm', smooth, 'fwhm')
+    preproc.connect(realign, 'realigned_files', smooth, 'in_files')
+    preproc.connect(smooth, 'smoothed_files', datasink, 'smoothed')
+    
+    return preproc
+
+
+def create_spmpreproc2(name='spmpreproc'):
+    preproc = pe.Workflow(name=name)
+
+    """
+    Set up a node to define all inputs required for the preprocessing workflow
+
+    """
+
+    inputnode = pe.Node(interface=util.IdentityInterface(fields=['func',
+                                                                 'struct',
+                                                                 'fwhm',
+                                                                 'outdir',
+                                                                 'subjectid',
+                                                                 'subs']),
+                        name='inputspec')
+
+    """
+    Create a datasink 
+    """
+    
+    datasink = pe.Node(interface=nio.DataSink(),
+                       name='datasink')
+    preproc.connect(inputnode, 'outdir', datasink, 'base_directory')
+    preproc.connect(inputnode, 'subjectid', datasink, 'container')
+    preproc.connect(inputnode, 'subs', datasink, 'substitutions')
+
+    """
+    Use :class:`nipype.interfaces.spm.Realign` for motion correction and
+    register all images to the mean image.
+    """
+
+    realign = pe.Node(interface=spm.Realign(), name="realign")
+    realign.inputs.register_to_mean = True
+    realign.inputs.jobtype = 'estimate'
+    preproc.connect(inputnode,'func', realign, 'in_files')
+    preproc.connect(realign, 'realignment_parameters', datasink, 'motion.parameters')
+
+    """
+    Plot the estimated motion parameters
+    """
+
+    plot_motion = pe.MapNode(interface=fsl.PlotMotionParams(in_source='spm'),
+                            name='plot_motion',
+                            iterfield=['in_file'])
+    plot_motion.iterables = ('plot_type', ['rotations', 'translations'])
+    preproc.connect(realign, 'realignment_parameters', plot_motion, 'in_file')
+    preproc.connect(plot_motion, 'out_file', datasink, 'motion.plots')
+    
+    """
+    Use :class:`nipype.interfaces.spm.Coregister` to perform a rigid body
+    registration of the functional data to the structural data.
+    """
+
+    coregister = pe.Node(interface=spm.Coregister(), name="coregister")
+    coregister.inputs.jobtype = 'estimate'
+    preproc.connect(inputnode, 'struct', coregister, 'target')
+    preproc.connect(realign, 'mean_image', coregister,'source')
+    preproc.connect(realign, 'realigned_files', coregister, 'apply_to_files')
+
+    segment = pe.Node(interface=spm.Segment(), name='segment')
+    preproc.connect(inputnode, 'struct', segment, 'data')
+    preproc.connect(segment, 'transformation_mat', datasink, 'segment.@transform')
+
+    """
+    Warp functional and structural data to SPM's T1 template using
+    :class:`nipype.interfaces.spm.Normalize`.  The tutorial data set includes
+    the template image, T1.nii.
+    """
+
+    normalize = pe.Node(interface=spm.Normalize(), name = "normalize")
+    normalize.inputs.jobtype = 'write'
+    preproc.connect(coregister, 'coregistered_files', normalize, 'apply_to_files') 
+    preproc.connect(segment, 'transformation_mat', normalize, 'parameter_file')
+    preproc.connect(normalize, 'normalized_files', datasink, 'normalized')
+
+    """
+    Smooth the functional data using :class:`nipype.interfaces.spm.Smooth`.
+    """
+
+    smooth = pe.Node(interface=spm.Smooth(), name = "smooth")
+    preproc.connect(inputnode, 'fwhm', smooth, 'fwhm')
+    preproc.connect(normalize, 'normalized_files', smooth, 'in_files')
+    preproc.connect(smooth, 'smoothed_files', datasink, 'smoothed')
+    
+    return preproc
+
+def create_spmpreproc3(name='spmpreproc'):
+    """ use freesurfer for smoothing and registration
+    realignment, coregistration with surface and surface-based smoothing.
+    """
+    
+    preproc = pe.Workflow(name=name)
+
+    """
+    Set up a node to define all inputs required for the preprocessing workflow
+
+    """
+
+    inputnode = pe.Node(interface=util.IdentityInterface(fields=['func',
+                                                                 'fsid',
+                                                                 'fsdir'
+                                                                 'fwhm',
+                                                                 'outdir',
+                                                                 'subjectid',
+                                                                 'subs']),
+                        name='inputspec')
+
+    """
+    Create a datasink 
+    """
+    
+    datasink = pe.Node(interface=nio.DataSink(),
+                       name='datasink')
+    preproc.connect(inputnode, 'outdir', datasink, 'base_directory')
+    preproc.connect(inputnode, 'subjectid', datasink, 'container')
+    preproc.connect(inputnode, 'subs', datasink, 'substitutions')
+
+    """
+    Use :class:`nipype.interfaces.spm.Realign` for motion correction and
+    register all images to the mean image.
+    """
+
+    realign = pe.Node(interface=spm.Realign(), name="realign")
+    realign.inputs.register_to_mean = True
+    realign.inputs.jobtype = 'estimate'
+    preproc.connect(inputnode,'func', realign, 'in_files')
+    preproc.connect(realign, 'realignment_parameters', datasink, 'motion.parameters')
+
+    """
+    Smooth the functional data using :class:`nipype.interfaces.spm.Smooth`.
+    """
+
+    smooth = pe.Node(interface=spm.Smooth(), name = "smooth")
+    preproc.connect(inputnode, 'fwhm', smooth, 'fwhm')
+    preproc.connect(normalize, 'normalized_files', smooth, 'in_files')
+    preproc.connect(smooth, 'smoothed_files', datasink, 'smoothed')
+    
+    return preproc
