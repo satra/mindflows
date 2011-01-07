@@ -34,7 +34,8 @@ fixed_fx = pe.Workflow(name='fixedfx')
 selectnode = pe.Node(interface=util.IdentityInterface(fields=['runs','funcdata']),
                     name='idselect')
 
-selectnode.iterables = ('runs', [[0,1],[0,2],[0,3],[1,2],[1,3],[2,3],[0,1,2],[0,1,2,3]])
+selectnode.iterables = ('runs', [[0,1],[0,2],[0,3],[1,2],[1,3],[2,3],[0,1,2],
+                                 [0,2,3],[0,1,3],[1,2,3],[0,1,2,3]])
 
 copeselect = pe.MapNode(interface=util.Select(), name='copeselect',
                         iterfield=['inlist'])
