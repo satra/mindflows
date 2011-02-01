@@ -1,3 +1,5 @@
+#! /usr/bin/env python
+
 helpdoc = """Convert dicom TimTrio dirs to nii.gz files based on config files.
 
 This function uses FreeSurfer tools (unpacksdcmdir) to convert Siemens
@@ -94,7 +96,7 @@ def infotodict(sdir, dicominfofile):
             pass
     return info
 
-def write_cfg(cfgfile, info, sid, tdir):
+def write_cfg(cfgfile, info, sid, tdir, ext='.nii.gz'):
     """Write a config file for unpacksdicomsdir
 
     If any file that exists is not needed it will remove it from the
@@ -108,14 +110,14 @@ def write_cfg(cfgfile, info, sid, tdir):
             format = 'nii'
             keepfiles = []
             for r,v in enumerate(runs):
-                output = '%s_run%02d_%02d.nii.gz' % (sid, r, v)
+                output = '%s_run%02d_%02d%s' % (sid, r, v, ext)
                 outfile = os.path.join(tdir, field, output)
                 if not os.path.exists(outfile):
                     torun = True
                     fp.write('%d %s %s %s\n' % (v, field,
                                                 format, output))
                 keepfiles.append(outfile)
-            for file in glob(os.path.join(tdir, field, '*.nii.gz')):
+            for file in glob(os.path.join(tdir, field, '*'+ext)):
                 if file not in keepfiles:
                     os.remove(file)
             
@@ -123,7 +125,8 @@ def write_cfg(cfgfile, info, sid, tdir):
     return torun
 
 
-def convert_dicoms(subjs, dicom_dir_template, outputdir, queue=None, heuristic_func=None):
+def convert_dicoms(subjs, dicom_dir_template, outputdir, queue=None, heuristic_func=None,
+                   extension = None):
     """Submit conversion jobs to SGE cluster
     """
     if heuristic_func == None:
@@ -140,7 +143,7 @@ def convert_dicoms(subjs, dicom_dir_template, outputdir, queue=None, heuristic_f
             info = heuristic_func(sdir, os.path.join(tdir,'dicominfo.txt'))
             save_json(infofile, info)
         cfgfile = os.path.join(tdir,'%s.auto.cfg' % sid)
-        if write_cfg(cfgfile, info, sid, tdir):
+        if write_cfg(cfgfile, info, sid, tdir, extension):
             convertcmd = ['unpacksdcmdir', '-src', sdir, '-targ', tdir,
                           '-generic', '-cfg', cfgfile, '-skip-moco']
             convertcmd = ' '.join(convertcmd)
@@ -178,6 +181,8 @@ s3
                         help='generate dicominfo file and exit')
     parser.add_argument('-q','--queue',dest='queue',
                         help='SGE queue to use if available')
+    parser.add_argument('-x','--ext',dest='ext',default='.nii.gz',
+                        help='Output type defaults to .nii.gz')
     args = parser.parse_args()
 
     
@@ -188,7 +193,7 @@ s3
     #subjs = ['rt997', 'rt1']
 
     heuristic_func = None
-    if os.path.exists(args.heuristic_file):
+    if args.heuristic_file and os.path.exists(args.heuristic_file):
         path, fname = os.path.split(os.path.realpath(args.heuristic_file))
         sys.path.append(path)
         mod = __import__(fname.split('.')[0])
@@ -199,4 +204,5 @@ s3
         convert_dicoms(args.subjs, args.dicom_dir_template,
                        os.path.abspath(args.outputdir),
                        heuristic_func=heuristic_func,
-                       queue=args.queue)
+                       queue=args.queue,
+                       extension = args.ext)

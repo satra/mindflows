@@ -10,7 +10,7 @@ import nipype.interfaces.fsl as fsl          # fsl
 import nipype.interfaces.utility as util     # utility
 import nipype.pipeline.engine as pe          # pypeline engine
 
-from nipype.externals.pynifti import load
+from nibabel import load
 
 """
 Preliminaries
@@ -394,8 +394,8 @@ targethead = fsl.Info.standard_image("avg152T1.nii.gz")
 
 # Use FNIRT to get a nonlinear transformation to the target
 fnirt = pe.Node(fsl.FNIRT(config_file=fnirtcfg,
-                          ref_file=targethead),
-                          field_file=True,
+                          ref_file=targethead,
+                          fieldcoeff_file=True),
                 name="fnirt")
 
 # Concatenate the func to anat and anat to standard transform matrices

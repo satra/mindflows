@@ -10,7 +10,7 @@ import nipype.interfaces.fsl as fsl          # fsl
 import nipype.interfaces.utility as util     # utility
 import nipype.pipeline.engine as pe          # pypeline engine
 
-from nipype.externals.pynifti import load
+from nibabel import load
 
 """
 Setup any package specific configuration. The output file format for FSL

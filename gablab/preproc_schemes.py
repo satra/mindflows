@@ -10,7 +10,7 @@ import nipype.algorithms.rapidart as ra      # artifact detection
 import nipype.interfaces.utility as util     # utility
 import nipype.pipeline.engine as pe          # pypeline engine
 
-from nipype.externals.pynifti import load
+from nibabel import load
 
 
 warn('WORK IN PROGRESS. USE WITH CAUTION')
