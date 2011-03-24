@@ -76,6 +76,7 @@ def isMoco(dcmfile):
 def infotodict(sdir, dicominfofile):
     """Heuristic evaluator for determining which runs belong where
     """
+    raise Exception('Please provide your own heuristic file')
     seq = np.genfromtxt(dicominfofile,dtype=object)
     info = dict(bold=[], dwi=[], fieldmap=[], flash=[], mprage=[])
     for s in seq:
